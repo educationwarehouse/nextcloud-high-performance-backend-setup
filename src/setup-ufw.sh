@@ -5,7 +5,7 @@ function install_ufw() {
 
 	ufw_step1
 	ufw_step2
-
+        ufw allow 22
 	log "UFW install completed."
 }
 
