@@ -26,6 +26,7 @@ EMAIL_SERVER_HOST=""   # Ask user
 EMAIL_SERVER_PORT=""   # Ask user
 DISABLE_SSH_SERVER=false
 SIGNALING_BUILD_FROM_SOURCES="" # Ask user
+DEBIAN_VERSION_ATLEAST="11"
 
 SETUP_VERSION=$(cat VERSION | head -n 1 | tr '\n' ' ')
 
@@ -299,21 +300,44 @@ function show_dialogs() {
 	fi
 	log "Using '$DISABLE_SSH_SERVER' for DISABLE_SSH_SERVER."
 
+	# For UNATTENDED_INSTALL, please fill SIGNALING_BUILD_FROM_SOURCES via settings.sh.
 	if [ "$UNATTENDED_INSTALL" != true ] && [ "$SHOULD_INSTALL_SIGNALING" = true ]; then
 		if [ "$SIGNALING_PACKAGES_AVAILABLE" = true ]; then
-			whiptail --title "Building from sources." \
-				--msgbox "The package 'nextcloud-spreed-signaling' unfortunately is pretty $(
-				)old in Debian Stable right now. This will cause issues. Instead the $(
-				)package will get build and installed from sources." 13 65
+			if [ "$DEBIAN_VERSION_MAJOR" = "11" ]; then
+				whiptail --title "Build from sources." --defaultno \
+				    --msgbox "The package 'nextcloud-spreed-signaling' is not available $(
+					)in this version of Debian (Debian 11). Also 'nats-server' and $(
+					)'coturn' in Debian 11 are rather old and buggy. To avoid these $(
+					)problems the packages will be built and installed from sources." \
+				    13 65 3>&1 1>&2 2>&3
+				SIGNALING_BUILD_FROM_SOURCES=true
+			fi
+
+			# A working version of nextcloud-spreed-signaling is available since
+			# Debian 12 (backports) and Debian 13 (provided first in Debian testing
+			# on 2023-10-22) and newer
+			if whiptail --title "Build from sources?" --defaultno \
+				--yesno "Would you like to build and install the $(
+				)'nextcloud-spreed-signaling' package from sources $(
+				)to get the newest possible version? This is normally $(
+				)not required and we suggest using the existing Debian packages." \
+				13 65 3>&1 1>&2 2>&3; then
+				SIGNALING_BUILD_FROM_SOURCES=true
+			fi
 		else
-			whiptail --title "Building from sources." \
+			# Originally, this part was for running this script on Debian 10 which is not
+			# supported anymore.
+			#
+			# Nowadays, most probable reason for landing here is if people try this script
+			# on Debian testing and one of the required packages has been removed from
+			# testing due to release critical bugs.
+			whiptail --title "Build from sources?" \
 				--msgbox "The packages 'nextcloud-spreed-signaling' and $(
 				)'nats-server' are not available in the package archive. The $(
-				)packages will get build and installed from sources." 13 65
+				)packages will get built and installed from sources." 13 65
+			SIGNALING_BUILD_FROM_SOURCES=true
 		fi
 	fi
-	SIGNALING_BUILD_FROM_SOURCES=true
-
 	log "Using '$SIGNALING_BUILD_FROM_SOURCES' for SIGNALING_BUILD_FROM_SOURCES".
 }
 
@@ -381,23 +405,26 @@ function check_root_perm() {
 
 function check_debian_system() {
 	# File exists and not empty
-	if ! [ -s /etc/debian_version ]; then
-		log "Couldn't read /etc/debian_version! Is this a debian system?"
+	if ! [ -s /etc/os-release ]; then
+		log "Couldn't read /etc/os-release! What kind of OS is this?"
 		exit 1
 	else
-		DEBIAN_VERSION=$(cat /etc/debian_version)
-
-		# Quick hack for debian testing (currently bookworm)
-		if [[ "$DEBIAN_VERSION" = "bookworm/sid" ]]; then
-			DEBIAN_VERSION="12"
+		source /etc/os-release
+		if [ "$ID" != "debian" ]; then
+			log "This host does not run Debian. Wrong distribution!"
+			exit 1
 		fi
-
-		if ! [[ $DEBIAN_VERSION =~ [0-9] ]]; then
-			log "Debian version '$DEBIAN_VERSION' not supported!"
+		if [ -z "$VERSION_ID" ] && [[ "$VERSION_CODENAME" =~ "sid" ]]; then
+			# /etc/os-release lacks VERSION_ID in testing/unstable, so assume
+			# a not-yet-released version of Debian
+			VERSION_ID=999
+		fi
+		if dpkg --compare-versions $VERSION_ID lt $DEBIAN_VERSION_ATLEAST; then
+			log "Debian version '$VERSION_ID' not supported (too old)!"
 			exit 1
 		fi
 
-		DEBIAN_MAJOR_VERSION=$(echo $DEBIAN_VERSION | grep -o -E "[0-9][0-9]")
+		DEBIAN_VERSION_MAJOR=$VERSION_ID
 	fi
 }
 

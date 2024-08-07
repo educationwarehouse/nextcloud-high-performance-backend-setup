@@ -5,7 +5,7 @@
 
 #SIGNALING_SUNWEAVER_SOURCE_FILE="/etc/apt/sources.list.d/sunweaver.list"
 
-SIGNALING_BACKPORTS_SOURCE_FILE="/etc/apt/sources.list.d/bullseye-backports.list"
+SIGNALING_BACKPORTS_SOURCE_FILE="/etc/apt/sources.list.d/debian-backports.list"
 
 SIGNALING_TURN_STATIC_AUTH_SECRET="$(openssl rand -hex 32)"
 SIGNALING_JANUS_API_KEY="$(openssl rand -base64 16)"
@@ -26,42 +26,52 @@ declare -A SIGNALING_NC_SERVER_MAXSCREENBITRATE # Associative array
 function install_signaling() {
 	log "Installing Signaling…"
 
-	if [ "$DEBIAN_MAJOR_VERSION" = "11" ]; then
+	if [ "$DEBIAN_VERSION_MAJOR" = "12" ] ; then
+		log "Enable bookworm-backports"
+		is_dry_run || cat <<-EOL >$SIGNALING_BACKPORTS_SOURCE_FILE
+			# Added by nextcloud-high-performance-backend setup-script.
+			deb http://deb.debian.org/debian bookworm-backports main
+		EOL
+		is_dry_run || apt-get update 2>&1 | tee -a $LOGFILE_PATH
+	fi
+
+	if [ "$DEBIAN_VERSION_MAJOR" = "11" ]; then
 		log "Enable bullseye-backports"
-		is_dry_run || cat <<EOL >$SIGNALING_BACKPORTS_SOURCE_FILE
-#Added by nextcloud-high-performance-backend setup-script.
-deb http://deb.debian.org/debian bullseye-backports main
-EOL
+		is_dry_run || cat <<-EOL >$SIGNALING_BACKPORTS_SOURCE_FILE
+			# Added by nextcloud-high-performance-backend setup-script.
+			deb http://deb.debian.org/debian bullseye-backports main
+		EOL
 		is_dry_run || apt-get update 2>&1 | tee -a $LOGFILE_PATH
 	fi
 
 	if [ "$SIGNALING_BUILD_FROM_SOURCES" = true ]; then
 		is_dry_run || apt update 2>&1 | tee -a $LOGFILE_PATH
 
+		# Remove old packages.
+		is_dry_run || apt purge nextcloud-spreed-signaling nats-server coturn 2>&1 | tee -a $LOGFILE_PATH
+
 		# Installing: golang-go make build-essential wget curl
-		if ! is_dry_run; then
-			if [ "$UNATTENDED_INSTALL" == true ]; then
-				log "Trying unattended install for Signaling."
-				export DEBIAN_FRONTEND=noninteractive
-				if [ "$DEBIAN_MAJOR_VERSION" = "11" ]; then
-					apt-get install -qqy -t bullseye-backports golang-go 2>&1 | tee -a $LOGFILE_PATH
-					apt-get install -qqy wget curl protobuf-compiler build-essential make 2>&1 | tee -a $LOGFILE_PATH
-				else
-					apt-get install -qqy wget curl golang-go protobuf-compiler build-essential make 2>&1 | tee -a $LOGFILE_PATH
-				fi
-			else
-				if [ "$DEBIAN_MAJOR_VERSION" = "11" ]; then
-					apt-get install -y -t bullseye-backports golang-go 2>&1 | tee -a $LOGFILE_PATH
-					apt-get install -y wget curl protobuf-compiler build-essential make 2>&1 | tee -a $LOGFILE_PATH
-				else
-					apt-get install -y wget curl golang-go protobuf-compiler build-essential make 2>&1 | tee -a $LOGFILE_PATH
-				fi
-			fi
+		APT_PARAMS="-y"
+		if [ "$UNATTENDED_INSTALL" == true ]; then
+			export DEBIAN_FRONTEND=noninteractive
+			APT_PARAMS="-qqy"
+			log "Trying unattended install for Signaling."
+		fi
+
+		if [ "$DEBIAN_VERSION_MAJOR" = "11" ]; then
+			apt-get install $APT_PARAMS -t bullseye-backports golang-go 2>&1 | tee -a $LOGFILE_PATH
+			apt-get install $APT_PARAMS wget curl protobuf-compiler build-essential make 2>&1 | tee -a $LOGFILE_PATH
+		elif [ "$DEBIAN_VERSION_MAJOR" = "12" ]; then
+			apt-get install $APT_PARAMS -t bookworm-backports golang-go 2>&1 | tee -a $LOGFILE_PATH
+			apt-get install $APT_PARAMS wget curl protobuf-compiler build-essential make 2>&1 | tee -a $LOGFILE_PATH
+		else
+			apt-get install $APT_PARAMS wget curl protobuf-compiler build-essential make golang-go 2>&1 | tee -a $LOGFILE_PATH
 		fi
 
 		is_dry_run || signaling_build_nextcloud-spreed-signaling && log "Would have built nextcloud-spreed-signaling now…"
+
 		# Only if Debian 11
-		if [ "$DEBIAN_MAJOR_VERSION" = "11" ]; then
+		if [ "$DEBIAN_VERSION_MAJOR" = "11" ]; then
 			is_dry_run || signaling_build_coturn && log "Would have built coturn now…"
 			is_dry_run || signaling_build_nats-server && log "Would have built nats-server now…"
 		fi
@@ -69,25 +79,19 @@ EOL
 		# Installing:
 		# - janus
 		# - ssl-cert
-		# - nats-server (Debian 12+)
-		# - coturn (Debian 12+)
-		if ! is_dry_run; then
-			if [ "$UNATTENDED_INSTALL" == true ]; then
-				export DEBIAN_FRONTEND=noninteractive
-				if [ "$DEBIAN_MAJOR_VERSION" = "11" ]; then
-					apt-get install -qqy ssl-cert 2>&1 | tee -a $LOGFILE_PATH
-					apt-get install -qqy -t bullseye-backports janus 2>&1 | tee -a $LOGFILE_PATH
-				else
-					apt-get install -qqy janus ssl-cert nats-server coturn 2>&1 | tee -a $LOGFILE_PATH
-				fi
-			else
-				if [ "$DEBIAN_MAJOR_VERSION" = "11" ]; then
-					apt-get install -y ssl-cert 2>&1 | tee -a $LOGFILE_PATH
-					apt-get install -y -t bullseye-backports janus 2>&1 | tee -a $LOGFILE_PATH
-				else
-					apt-get install -y janus ssl-cert nats-server coturn 2>&1 | tee -a $LOGFILE_PATH
-				fi
-			fi
+		# - nats-server (Always built from sources for Debian 11)
+		# - coturn      (Always built from sources for Debian 11)
+		APT_PARAMS="-y"
+		if [ "$UNATTENDED_INSTALL" == true ]; then
+			export DEBIAN_FRONTEND=noninteractive
+			APT_PARAMS="-qqy"
+		fi
+
+		if [ "$DEBIAN_VERSION_MAJOR" = "11" ]; then
+			is_dry_run || apt-get install $APT_PARAMS ssl-cert 2>&1 | tee -a $LOGFILE_PATH
+			is_dry_run || apt-get install $APT_PARAMS -t bullseye-backports janus 2>&1 | tee -a $LOGFILE_PATH
+		else
+			is_dry_run || apt-get install $APT_PARAMS janus ssl-cert nats-server coturn 2>&1 | tee -a $LOGFILE_PATH
 		fi
 
 		log "Reloading systemd."
@@ -126,18 +130,24 @@ function signaling_build_nats-server() {
 	log "Latest nats-server version is: '$LATEST_RELEASE_TAG'"
 
 	log "Removing old sources…"
-	rm -v nats-server-v*-linux-amd64.tar.gz | tee -a $LOGFILE_PATH || true
+	rm -v nats-server-v*-linux-*.tar.gz | tee -a $LOGFILE_PATH || true
 
 	log "Downloading sources…"
-	wget $(curl -s "$LATEST_RELEASE" | grep 'linux-amd64.tar.gz' |
-		grep 'browser_download_url' | cut -d\" -f4) |
-		tee -a $LOGFILE_PATH
+	if [ "$(dpkg --print-architecture)" = "arm64" ]; then
+		wget $(curl -s "$LATEST_RELEASE" | grep 'linux-arm64.tar.gz' |
+			grep 'browser_download_url' | cut -d\" -f4) |
+			tee -a $LOGFILE_PATH
+	else
+		wget $(curl -s "$LATEST_RELEASE" | grep 'linux-amd64.tar.gz' |
+			grep 'browser_download_url' | cut -d\" -f4) |
+			tee -a $LOGFILE_PATH
+   	fi
 
 	log "Extracting sources…"
-	tar -xvf "nats-server-$LATEST_RELEASE_TAG-linux-amd64.tar.gz" | tee -a $LOGFILE_PATH
+	tar -xvf "nats-server-$LATEST_RELEASE_TAG-linux-*.tar.gz" | tee -a $LOGFILE_PATH
 
 	log "Copying binary into /usr/local/bin/nats-server…"
-	cp --backup=numbered -v "nats-server-$LATEST_RELEASE_TAG-linux-amd64/nats-server" /usr/local/bin/nats-server | tee -a $LOGFILE_PATH
+	cp --backup=numbered -v "nats-server-$LATEST_RELEASE_TAG-linux-*/nats-server" /usr/local/bin/nats-server | tee -a $LOGFILE_PATH
 
 	deploy_file "$TMP_DIR_PATH"/signaling/nats-server.service /lib/systemd/system/nats-server.service || true
 	deploy_file "$TMP_DIR_PATH"/signaling/nats-server.conf /etc/nats-server.conf || true
@@ -152,16 +162,12 @@ function signaling_build_coturn() {
 	log "Installing necessary packages…"
 	is_dry_run || apt update 2>&1 | tee -a $LOGFILE_PATH
 
-	# Installing: golang-go make build-essential
-	if ! is_dry_run; then
-		if [ "$UNATTENDED_INSTALL" == true ]; then
-			log "Trying unattended install for Signaling."
-			export DEBIAN_FRONTEND=noninteractive
-			apt-get install -qqy cmake libssl-dev libevent-dev git 2>&1 | tee -a $LOGFILE_PATH
-		else
-			apt-get install -y cmake libssl-dev libevent-dev git 2>&1 | tee -a $LOGFILE_PATH
-		fi
+	APT_PARAMS="-y"
+	if [ "$UNATTENDED_INSTALL" == true ]; then
+		export DEBIAN_FRONTEND=noninteractive
+		APT_PARAMS="-qqy"
 	fi
+	is_dry_run || apt-get install $APT_PARAMS cmake libssl-dev libevent-dev git 2>&1 | tee -a $LOGFILE_PATH
 
 	log "Downloading sources…"
 	rm coturn-master.tar.gz | tee -a $LOGFILE_PATH || true
@@ -253,16 +259,21 @@ function signaling_step3() {
 	# - nats-server
 	# - nextcloud-spreed-signaling
 	# - coturn
-	if ! is_dry_run; then
-		if [ "$UNATTENDED_INSTALL" == true ]; then
-			log "Trying unattended install for Signaling."
-			export DEBIAN_FRONTEND=noninteractive
-			apt-get install -qqy janus nats-server nextcloud-spreed-signaling \
-				coturn ssl-cert 2>&1 | tee -a $LOGFILE_PATH
-		else
-			apt-get install -y janus nats-server nextcloud-spreed-signaling \
-				coturn ssl-cert 2>&1 | tee -a $LOGFILE_PATH
-		fi
+	APT_PARAMS="-y"
+	if [ "$UNATTENDED_INSTALL" == true ]; then
+		export DEBIAN_FRONTEND=noninteractive
+		APT_PARAMS="-qqy"
+	fi
+
+	if [ "$DEBIAN_VERSION_MAJOR" = "11" ]; then
+		# Nope, always build from sources. This function should never be called in the first place.
+		exit 1;
+	elif [ "$DEBIAN_VERSION_MAJOR" = "12" ]; then
+		# Special case, please install 'nextcloud-spreed-signaling' from bookworm-backports.
+		is_dry_run || apt-get install $APT_PARAMS janus nats-server coturn ssl-cert 2>&1 | tee -a $LOGFILE_PATH
+		is_dry_run || apt-get install $APT_PARAMS -t bookworm-backports nextcloud-spreed-signaling nextcloud-spreed-signaling-client 2>&1 | tee -a $LOGFILE_PATH
+	else
+		is_dry_run || apt-get install $APT_PARAMS janus nats-server coturn ssl-cert nextcloud-spreed-signaling nextcloud-spreed-signaling-client 2>&1 | tee -a $LOGFILE_PATH
 	fi
 }
 
@@ -379,7 +390,13 @@ function signaling_step5() {
 	deploy_file "$TMP_DIR_PATH"/signaling/nginx-signaling-upstream-servers.conf /etc/nginx/snippets/signaling-upstream-servers.conf || true
 	deploy_file "$TMP_DIR_PATH"/signaling/nginx-signaling-forwarding.conf /etc/nginx/snippets/signaling-forwarding.conf || true
 
-	deploy_file "$TMP_DIR_PATH"/signaling/janus.jcfg /etc/janus/janus.jcfg || true
+	if [ "$(dpkg --print-architecture)" = "arm64" ]; then
+		deploy_file "$TMP_DIR_PATH"/signaling/janus_aarch64.jcfg /etc/janus/janus.jcfg || true
+	elif [ "$(dpkg --print-architecture)" = "ppc64el" ]; then
+		deploy_file "$TMP_DIR_PATH"/signaling/janus_powerpc64le.jcfg /etc/janus/janus.jcfg || true
+	else
+		deploy_file "$TMP_DIR_PATH"/signaling/janus.jcfg /etc/janus/janus.jcfg || true
+	fi
 	deploy_file "$TMP_DIR_PATH"/signaling/janus.transport.http.jcfg /etc/janus/janus.transport.http.jcfg || true
 	deploy_file "$TMP_DIR_PATH"/signaling/janus.transport.websockets.jcfg /etc/janus/janus.transport.websockets.jcfg || true
 
