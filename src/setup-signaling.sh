@@ -379,7 +379,7 @@ function signaling_step4() {
 	log "Replacing '<SIGNALING_COTURN_EXTERN_IPV4>' with '$EXTERN_IPv4'…"
 	sed -i "s|<SIGNALING_COTURN_EXTERN_IPV4>|$EXTERN_IPv4|g" "$TMP_DIR_PATH"/signaling/*
 
-	EXTERN_IPv6=$(wget -6 ident.me -O - -o /dev/null || true)
+	EXTERN_IPv6=$(timeout 5 wget -6 ident.me -O - -o /dev/null || echo '::')
 	log "Replacing '<SIGNALING_COTURN_EXTERN_IPV6>' with '$EXTERN_IPv6'…"
 	sed -i "s|<SIGNALING_COTURN_EXTERN_IPV6>|$EXTERN_IPv6|g" "$TMP_DIR_PATH"/signaling/*
 }
