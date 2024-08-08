@@ -34,8 +34,10 @@ function collabora_step1() {
 function collabora_step2() {
 	# 2. Add CODE package repositories
 	log "\nStep 2: Add CODE package repositories"
+ 
+        echo "deb http://deb.debian.org/debian bookworm contrib non-free" > /etc/apt/sources.list.d/contrib.list
 
-	COLLABORA_REPO_URL="https://www.collaboraoffice.com/repos/CollaboraOnline/CODE-deb"
+        COLLABORA_REPO_URL="https://www.collaboraoffice.com/repos/CollaboraOnline/CODE-deb"
 
 	log "Installing Collabora APT-Repo URL: '$COLLABORA_REPO_URL'…"
 	is_dry_run || cat <<EOF >$COLLABORA_SOURCES_FILE
